@@ -49,7 +49,7 @@ class HelperService : AccessibilityService() {
         val DELAY_CLOSE_ROB_WINDOW = 2000L
 
         //自动划页最多多少页，炒过之后回到小时榜第一名
-        val MAX_PAGE = 50
+        val MAX_PAGE = 15
 
         //红包倒计时最多多少
         val MAX_PACKET_WAIT_TIME = 60
