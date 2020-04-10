@@ -69,6 +69,9 @@ class HelperService : AccessibilityService() {
         val PACK_POP_CLOSE_ID = "com.ss.android.ugc.aweme:id/gas"
 
 
+        //主页面
+        val CLASS_WINDOW_MAIN = "com.ss.android.ugc.aweme.main.MainActivity"
+
         //直播页面class
         val CLASS_WINDOW_LIVE = "com.ss.android.ugc.aweme.live.LivePlayActivity"
 
@@ -154,6 +157,13 @@ class HelperService : AccessibilityService() {
                     startRobPacket()
                 } else if (event.className == CLASS_WINDOW_LIVE) {
                     startFindPacket()
+                } else if (event.className == CLASS_WINDOW_MAIN) {
+                    MAIN_HANDLER.postDelayed({
+                        processLog("跑到主页去了，尝试重新打开直播")
+                        currentPage = MAX_PAGE - 2
+                        rootInActiveWindow.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/b2v")
+                            ?.firstOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    }, 1000)
                 } else {
                     if (isXsb(event)) {
                         //小时榜
@@ -244,7 +254,6 @@ class HelperService : AccessibilityService() {
         }
 
     var currentPage = 1
-
 
 
     fun startFindPacket() {
