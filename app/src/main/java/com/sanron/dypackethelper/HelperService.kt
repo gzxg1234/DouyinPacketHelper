@@ -7,11 +7,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.graphics.Path
-import android.graphics.Rect
 import android.os.Build
+import android.text.format.DateUtils
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
 
 
@@ -44,6 +43,16 @@ class HelperService : AccessibilityService() {
     }
 
     companion object {
+        //房间寻找红包超时时间
+        val FIND_TIME_OUT = 2500L
+
+        val DELAY_CLOSE_ROB_WINDOW = 2000L
+
+        //自动划页最多多少页，炒过之后回到小时榜第一名
+        val MAX_PAGE = 50
+
+        //红包倒计时最多多少
+        val MAX_PACKET_WAIT_TIME = 60
 
         var sInstance: HelperService? = null
 
@@ -66,6 +75,8 @@ class HelperService : AccessibilityService() {
         //抢红包弹窗class
         val CLASS_WINDOW_ROB = "com.bytedance.android.livesdk.chatroom.ui.da"
 
+        val CLASS_DIALOG = "android.app.Dialog"
+
         //抖音包名
         val DOUYIN_PKG = "com.ss.android.ugc.aweme"
     }
@@ -75,70 +86,7 @@ class HelperService : AccessibilityService() {
     var state = State.FIND_PACKET
         set(value) {
             field = value
-            if (value == State.WAIT_PACKET_CAN_ROB) {
-                startRob()
-            } else {
-                stopRob()
-            }
-
-            if (value == State.FIND_PACKET) {
-                postDelayNext()
-            } else {
-                scollToNextJob = null
-            }
-
-            debug(
-                "抢红包状态改变==>${
-                when (value) {
-                    State.WAIT_NEXT_PAGE -> "翻到下个主播"
-                    State.FIND_PACKET -> "寻找红包挂件"
-                    State.WAIT_PACKET_POP -> "等待红包弹窗"
-                    State.WAIT_PACKET_CAN_ROB -> "等待红包可点击"
-                    State.WAIT_RESULT -> "等待红包结果"
-                    State.WAIT_PACKET_POP_CLOSE -> "等待红包弹窗关闭"
-                }
-                }"
-            )
         }
-
-    var scollToNextJob: Job? = null
-        set(value) {
-            field?.cancel()
-            field = value
-        }
-
-    @RequiresApi(Build.VERSION_CODES.N)
-    private fun postDelayNext() {
-        scollToNextJob = GlobalScope.launch(Dispatchers.Main) {
-            this@HelperService.debug("倒计时准备翻到下一页")
-            delay(5000)
-            if (!running) {
-                return@launch
-            }
-            val path = Path()
-
-            var y: Float = (resources.displayMetrics.heightPixels * 4 / 5f)
-            var x: Float = (resources.displayMetrics.widthPixels * 4f / 5f)
-            path.moveTo(x, y)
-            path.lineTo(x, y - resources.displayMetrics.heightPixels * 3 / 5f)
-
-            val gestureDescription = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
-                .build()
-            state = State.WAIT_NEXT_PAGE
-            dispatchGesture(gestureDescription, object : GestureResultCallback() {
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    super.onCancelled(gestureDescription)
-                }
-
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    super.onCompleted(gestureDescription)
-                    this@HelperService.debug("翻页手势已完毕")
-                    state = State.FIND_PACKET
-                }
-            }, MAIN_HANDLER)
-        }
-    }
 
     val flowView by lazy {
         FloatView(this)
@@ -162,7 +110,7 @@ class HelperService : AccessibilityService() {
             notification = Notification.Builder(this).build()
         }
         startForeground(2, notification)
-        debug("onServiceConnected")
+        processLog("onServiceConnected")
         sInstance = this
     }
 
@@ -173,12 +121,13 @@ class HelperService : AccessibilityService() {
 
     fun start() {
         running = true
-        state = State.FIND_PACKET
+        startFindPacket()
     }
 
     fun pause() {
         running = false
-        state = State.FIND_PACKET
+        findPacketJob = null
+        autoRobJob = null
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -193,12 +142,6 @@ class HelperService : AccessibilityService() {
                 debug("SOURCE_WINDOW->${event.source?.window}")
                 debug("SOURCE_WINDOW_PARENT->${event.source?.window?.parent}")
             }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-//                if (event.packageName != DOUYIN_PKG) {
-//                    return
-//                }
-//                debug("TYPE_WINDOW_CONTENT_CHANGED->${event}")
-            }
         }
 
         if (!running) {
@@ -207,112 +150,256 @@ class HelperService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                when (state) {
-                    State.FIND_PACKET -> {
-                        //寻找红包时，弹出其他弹窗，需要关闭
-                        if (event.className == CLASS_WINDOW_ROB) {
-                            //红包弹窗弹出了，改变状态
-                            state = State.WAIT_PACKET_CAN_ROB
-                        } else if (event.className != CLASS_WINDOW_LIVE) {
-                            debug("弹出${event.className},需要关闭")
+                if (event.className == CLASS_WINDOW_ROB) {
+                    startRobPacket()
+                } else if (event.className == CLASS_WINDOW_LIVE) {
+                    startFindPacket()
+                } else {
+                    if (isXsb(event)) {
+                        //小时榜
+                        processLog("小时榜被打开，准备去第一个房间")
+                        autoRobJob = null
+                        findPacketJob = null
+                        runUnitDone(3000L, interval = 100L, run = {
+                            rootInActiveWindow?.findAccessibilityNodeInfosByViewId(
+                                "com.ss.android.ugc.aweme:id/f3m"
+                            )
+                                ?.firstOrNull()?.getChild(1)?.let { firstRoom ->
+                                    processLog("点击小时榜第一个房间")
+                                    firstRoom.performAction(
+                                        AccessibilityNodeInfo.ACTION_CLICK
+                                    )
+                                    delay(1000)
+                                    currentPage = 1
+                                    startFindPacket()
+                                    return@runUnitDone true
+                                }
+                            false
+                        }, onTimeOut = {
+                            processLog("加载小时榜超时了,关闭小时榜弹窗")
                             performGlobalAction(GLOBAL_ACTION_BACK)
-                        }
-                    }
-                    State.WAIT_PACKET_POP -> {
-                        if (event.className == CLASS_WINDOW_ROB) {
-                            //红包弹窗弹出了，改变状态
-                            state = State.WAIT_PACKET_CAN_ROB
-                        }
-                    }
-                    State.WAIT_PACKET_CAN_ROB -> {
-                        if (event.className == CLASS_WINDOW_LIVE) {
-                            //等待红包弹窗可抢过程中，关闭了红包弹窗，需要重新打开
-                            state = State.FIND_PACKET
-                        } else {
-                            //等待红包弹窗可抢过程中，弹出其他弹窗，需要关闭
-                            debug("弹出${event.className},需要关闭")
-                            performGlobalAction(GLOBAL_ACTION_BACK)
-                        }
-                    }
-
-                    State.WAIT_RESULT -> {
-                        if (event.className != CLASS_WINDOW_LIVE) {
-                            //等待红包结果中，弹出其他弹窗，需要关闭
-                            debug("弹出${event.className},需要关闭")
-                            performGlobalAction(GLOBAL_ACTION_BACK)
-                        }
-                    }
-                    State.WAIT_PACKET_POP_CLOSE -> {
-                        if (event.className == CLASS_WINDOW_LIVE) {
-                            //弹窗已关闭
-                            state = State.FIND_PACKET
-                        }
+                            startFindPacket()
+                        })
+//                        GlobalScope.launch {
+//                            try {
+//                                withTimeout(3000) {
+//                                    while (isActive) {
+//                                        rootInActiveWindow?.findAccessibilityNodeInfosByViewId(
+//                                            "com.ss.android.ugc.aweme:id/f3m"
+//                                        )
+//                                            ?.firstOrNull()?.getChild(1)?.let { firstRoom ->
+//                                                processLog("点击小时榜第一个房间")
+//                                                firstRoom.performAction(
+//                                                    AccessibilityNodeInfo.ACTION_CLICK
+//                                                )
+//                                                delay(1000)
+//                                                currentPage = 1
+//                                                startFindPacket()
+//                                                return@withTimeout
+//                                            }
+//                                        delay(100)
+//                                    }
+//                                }
+//                            } catch (e: TimeoutCancellationException) {
+//                                processLog("加载小时榜超时了,关闭小时榜弹窗")
+//                                performGlobalAction(GLOBAL_ACTION_BACK)
+//                                startFindPacket()
+//                            }
+//                        }
+                    } else {
+                        debug("弹出弹窗${event.className},尝试关闭")
+                        performGlobalAction(GLOBAL_ACTION_BACK)
                     }
                 }
             }
         }
-
-        when (state) {
-            State.FIND_PACKET -> {
-                //寻找红包挂件view
-                val packetNode = findRedPacketNode()
-                if (packetNode != null) {
-                    packetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    state = State.WAIT_PACKET_POP
-                    return
-                }
-            }
-//            State.WAIT_PACKET_CAN_ROB -> {
-//                //寻找“抢”图标，找到了说明红包已可抢
-//                val packetNode = findRobNode()
-//                if (packetNode != null) {
-//                    packetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-//                    state = State.WAIT_RESULT
-//                    return
-//                }
-//            }
-            State.WAIT_RESULT -> {
-                //“抢”图标消失，说明抢好了，不管结果
-                val packetNode = findRobNode()
-                if (packetNode == null) {
-                    state = State.WAIT_PACKET_POP_CLOSE
-                    MAIN_HANDLER.postDelayed({
-                        findClosePopNode()?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    }, SHOW_RESULT_TIME)
-                    return
-                }
-            }
-        }
-
     }
 
+    fun isXsb(event: AccessibilityEvent): Boolean {
+        return event.className == CLASS_DIALOG
+                && (event.source?.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/ep6")
+            ?.firstOrNull() != null)
+    }
 
-    var robJob: Job? = null
+    var autoRobJob: Job? = null
         set(value) {
             field?.cancel()
             field = value
-        }
-
-    fun startRob() {
-        robJob = GlobalScope.launch(Dispatchers.IO) {
-            this@HelperService.debug("循环等待红包变为可抢")
-            while (isActive) {
-                val packetNode = findRobNode()
-                if (packetNode != null) {
-                    this@HelperService.debug("循环等待红包变为可抢")
-                    packetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    state = State.WAIT_RESULT
-                    robJob = null
+            field?.invokeOnCompletion {
+                if (it is CancellationException) {
+                    processLog("autoRobJob被取消")
                 }
-                delay(1)
             }
         }
+
+    var findPacketJob: Job? = null
+        set(value) {
+            field?.cancel()
+            field = value
+            field?.invokeOnCompletion {
+                if (it is CancellationException) {
+                    processLog("findPacketJob被取消")
+                }
+            }
+        }
+
+    var currentPage = 1
+
+
+
+    fun startFindPacket() {
+        autoRobJob = null
+        this@HelperService.processLog("开始等待寻找红包")
+        findPacketJob = runUnitDone(FIND_TIME_OUT, interval = 100, run = {
+            findRedPacketNode()?.let {
+                val timeNode =
+                    it.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/fk4")
+                        ?.firstOrNull()
+                var shouldClick = timeNode?.text?.split(":")?.let { splitTimes ->
+                    splitTimes.size == 2 && (splitTimes[0].toInt() * 60 + splitTimes[1].toInt()) < MAX_PACKET_WAIT_TIME
+                } ?: true
+
+                if (shouldClick) {
+                    this@HelperService.processLog("找到了红包按钮并且时间少于$MAX_PACKET_WAIT_TIME，点点点")
+                    it.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } else {
+                    this@HelperService.processLog("找到了红包按钮但是时间大于$MAX_PACKET_WAIT_TIME，先去下一页")
+                    scrollToNextRoom()
+                }
+                return@runUnitDone true
+            }
+            false
+        }, onTimeOut = {
+            this@HelperService.processLog("超时没有找到红包，切换到下个房间")
+            scrollToNextRoom()
+        })
+
+//        findPacketJob = GlobalScope.launch {
+//            this@HelperService.processLog("开始等待寻找红包")
+//            try {
+//                withTimeout(FIND_TIME_OUT) {
+//                    while (isActive) {
+//                        findRedPacketNode()?.let {
+//                            val timeNode =
+//                                it.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/fk4")
+//                                    ?.firstOrNull()
+//                            var shouldClick = timeNode?.text?.split(":")?.let { splitTimes ->
+//                                splitTimes.size == 2 && (splitTimes[0].toInt() * 60 + splitTimes[1].toInt()) < MAX_PACKET_WAIT_TIME
+//                            } ?: true
+//
+//                            if (shouldClick) {
+//                                this@HelperService.processLog("找到了红包按钮并且时间少于$MAX_PACKET_WAIT_TIME，点点点")
+//                                it.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+//                            } else {
+//                                this@HelperService.processLog("找到了红包按钮但是时间大于$MAX_PACKET_WAIT_TIME，先去下一页")
+//                                scrollToNextRoom()
+//                            }
+//                            return@withTimeout
+//                        }
+//                        delay(100)
+//                    }
+//                }
+//            } catch (e: TimeoutCancellationException) {
+//                this@HelperService.processLog("超时没有找到红包，切换到下个房间")
+//                scrollToNextRoom()
+//            }
+//        }
     }
 
-    fun stopRob() {
-        robJob = null
+    fun scrollToNextRoom() {
+        if (currentPage == MAX_PAGE) {
+            toFirstRoom()
+            return
+        }
+
+        val path = Path()
+        var y: Float = (resources.displayMetrics.heightPixels * 4 / 5f)
+        var x: Float = (resources.displayMetrics.widthPixels * 4f / 5f)
+        path.moveTo(x, y)
+        path.lineTo(x, y - resources.displayMetrics.heightPixels * 3 / 5f)
+        val gestureDescription = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
+            .build()
+        dispatchGesture(gestureDescription, object : GestureResultCallback() {
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                super.onCancelled(gestureDescription)
+                MAIN_HANDLER.postDelayed({
+                    startFindPacket()
+                }, 1000)
+            }
+
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+                this@HelperService.processLog("翻页手势已完毕")
+                currentPage++
+                GlobalScope.launch(Dispatchers.Main) {
+                    delay(1000)
+                    startFindPacket()
+                }
+            }
+        }, MAIN_HANDLER)
     }
 
+    fun startRobPacket() {
+        findPacketJob = null
+        autoRobJob = runUnitDone(5 * DateUtils.MINUTE_IN_MILLIS, interval = 1L, run = {
+            val flagView =
+                rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/fia")
+                    ?.firstOrNull()
+            if (flagView == null || "送你一个好运气" != flagView.text) {
+                startFindPacket()
+                return@runUnitDone true
+            }
+            val packetNode = findRobNode()
+            if (packetNode != null) {
+                packetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                this@HelperService.processLog("点击了抢红包按钮，延迟${DELAY_CLOSE_ROB_WINDOW}关闭弹窗")
+                delay(DELAY_CLOSE_ROB_WINDOW)
+                findClosePopNode()?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                return@runUnitDone true
+            }
+            false
+        })
+//        autoRobJob = GlobalScope.launch(Dispatchers.IO) {
+//            this@HelperService.processLog("等待红包变为可抢")
+//            while (isActive) {
+//                val flagView =
+//                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/fia")
+//                        ?.firstOrNull()
+//                if (flagView == null || "送你一个好运气" != flagView.text) {
+//                    startFindPacket()
+//                    return@launch
+//                }
+//                val packetNode = findRobNode()
+//                if (packetNode != null) {
+//                    packetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+//                    this@HelperService.processLog("点击了抢红包按钮，延迟${DELAY_CLOSE_ROB_WINDOW}关闭弹窗")
+//                    delay(DELAY_CLOSE_ROB_WINDOW)
+//                    findClosePopNode()?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+//                    return@launch
+//                }
+//                delay(1)
+//            }
+//        }
+    }
+
+    //去第一名的房间
+    fun toFirstRoom() {
+        processLog("去小时榜第一名的房间")
+        autoRobJob = null
+        findPacketJob = null
+        val bandanbtn =
+            rootInActiveWindow.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/ag8")
+                ?.firstOrNull()
+        bandanbtn?.parent?.let {
+            it.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+    }
+
+    fun processLog(msg: String) {
+        debug("状态改变==>$msg")
+    }
 
     fun findClosePopNode(): AccessibilityNodeInfo? {
         return rootInActiveWindow?.findAccessibilityNodeInfosByViewId(PACK_POP_CLOSE_ID)

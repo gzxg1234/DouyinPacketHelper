@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import kotlinx.coroutines.*
 
 /**
  *Author:sanron
@@ -27,4 +28,26 @@ fun Context.dp(dp: Number): Int {
 
 fun showToast(msg: CharSequence, length: Int = Toast.LENGTH_SHORT) {
     Toast.makeText(MyApp.instance, msg, length).show()
+}
+
+fun runUnitDone(
+    timeout: Long,
+    interval: Long = 10,
+    run: suspend () -> Boolean,
+    onTimeOut: suspend () -> Unit = {}
+): Job {
+    return GlobalScope.launch {
+        try {
+            withTimeout(timeout) {
+                while (isActive) {
+                    if (run()) {
+                        return@withTimeout
+                    }
+                    delay(interval)
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            onTimeOut()
+        }
+    }
 }
