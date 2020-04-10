@@ -12,7 +12,11 @@ import android.widget.Toast
  *Description:
  */
 fun Any.debug(msg: String) {
-    Log.d(this::class.java.simpleName, msg)
+    Log.d(
+        this::class.java.simpleName, "\n--------------------------------------\n"
+                + msg
+                + "\n--------------------------------------"
+    )
 }
 
 val MAIN_HANDLER = Handler(Looper.getMainLooper())

@@ -20,4 +20,10 @@
         android:background="@drawable/float_btn_bg"
         android:text="设置"
         android:textColor="#fff" />
+
+    <Button
+        android:clickable="false"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="移动" />
 </LinearLayout>
