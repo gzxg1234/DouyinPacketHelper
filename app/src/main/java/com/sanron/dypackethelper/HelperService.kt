@@ -2,7 +2,12 @@ package com.sanron.dypackethelper
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -141,11 +146,28 @@ class HelperService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        val nm: NotificationManager =
+            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        var notification: Notification? = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    "ddd",
+                    "前台",
+                    NotificationManager.IMPORTANCE_LOW
+                )
+            )
+            notification = Notification.Builder(this, "ddd").build()
+        } else {
+            notification = Notification.Builder(this).build()
+        }
+        startForeground(2, notification)
         debug("onServiceConnected")
         sInstance = this
     }
 
     override fun onInterrupt() {
+        stopForeground(true)
         sInstance = null
     }
 
@@ -282,7 +304,7 @@ class HelperService : AccessibilityService() {
                     state = State.WAIT_RESULT
                     robJob = null
                 }
-                delay(10)
+                delay(1)
             }
         }
     }
@@ -290,6 +312,7 @@ class HelperService : AccessibilityService() {
     fun stopRob() {
         robJob = null
     }
+
 
     fun findClosePopNode(): AccessibilityNodeInfo? {
         return rootInActiveWindow?.findAccessibilityNodeInfosByViewId(PACK_POP_CLOSE_ID)
