@@ -59,15 +59,30 @@ class HelperService : AccessibilityService() {
         //展示结果的事件
         val SHOW_RESULT_TIME = 2000L
 
+        //直播按钮id
+        val ZHIBO_BTN_ID = "com.ss.android.ugc.aweme:id/b3f"
+
         //红包viewid
-        val PACKET_VIEW_ID = "com.ss.android.ugc.aweme:id/dvy"
+        val PACKET_VIEW_ID = "com.ss.android.ugc.aweme:id/dx6"
+
+        //红包时间id
+        val PACKET_TIME_ID = "com.ss.android.ugc.aweme:id/flg"
 
         //弹出的红包弹窗的“抢”图片，表示可以抢了
-        val ROB_ID = "com.ss.android.ugc.aweme:id/e3u"
+        val ROB_ID = "com.ss.android.ugc.aweme:id/e51"
 
         //关闭弹窗的viewid，点击关闭抢红包的弹窗
-        val PACK_POP_CLOSE_ID = "com.ss.android.ugc.aweme:id/gas"
+        val PACK_POP_CLOSE_ID = "com.ss.android.ugc.aweme:id/gc7"
 
+        //红包弹窗里的送你一个好运气
+        val LUCK_TEXT_VIEW_ID = "com.ss.android.ugc.aweme:id/fjm"
+        val LUCK_TEXT = "送你一个好运气"
+
+        //小时榜列表容器id
+        val XSB_LIST_ID = "com.ss.android.ugc.aweme:id/f4z"
+
+        //小时榜弹窗顶部栏的id
+        val XSB_TOP_PANEL_ID = "com.ss.android.ugc.aweme:id/dao"
 
         //主页面
         val CLASS_WINDOW_MAIN = "com.ss.android.ugc.aweme.main.MainActivity"
@@ -165,7 +180,7 @@ class HelperService : AccessibilityService() {
                     MAIN_HANDLER.postDelayed({
                         processLog("跑到主页去了，尝试重新打开直播")
                         currentPage = MAX_PAGE - 2
-                        rootInActiveWindow.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/b2v")
+                        rootInActiveWindow.findAccessibilityNodeInfosByViewId(ZHIBO_BTN_ID)
                             ?.firstOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     }, 1000)
                 } else {
@@ -175,9 +190,7 @@ class HelperService : AccessibilityService() {
                         autoRobJob = null
                         findPacketJob = null
                         runUnitDone(3000L, interval = 100L, run = {
-                            rootInActiveWindow?.findAccessibilityNodeInfosByViewId(
-                                "com.ss.android.ugc.aweme:id/f3m"
-                            )
+                            rootInActiveWindow?.findAccessibilityNodeInfosByViewId(XSB_LIST_ID)
                                 ?.firstOrNull()?.getChild(1)?.let { firstRoom ->
                                     processLog("点击小时榜第一个房间")
                                     firstRoom.performAction(
@@ -231,7 +244,7 @@ class HelperService : AccessibilityService() {
 
     fun isXsb(event: AccessibilityEvent): Boolean {
         return event.className == CLASS_DIALOG
-                && (event.source?.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/ep6")
+                && (event.source?.findAccessibilityNodeInfosByViewId(XSB_TOP_PANEL_ID)
             ?.firstOrNull() != null)
     }
 
@@ -266,9 +279,9 @@ class HelperService : AccessibilityService() {
         findPacketJob = runUnitDone(FIND_TIME_OUT, interval = 100, run = {
             findRedPacketNode()?.let {
                 val timeNode =
-                    it.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/fk4")
+                    it.findAccessibilityNodeInfosByViewId(PACKET_TIME_ID)
                         ?.firstOrNull()
-                var shouldClick = timeNode?.text?.split(":")?.let { splitTimes ->
+                val shouldClick = timeNode?.text?.split(":")?.let { splitTimes ->
                     splitTimes.size == 2 && (splitTimes[0].toInt() * 60 + splitTimes[1].toInt()) < MAX_PACKET_WAIT_TIME
                 } ?: true
 
@@ -326,8 +339,8 @@ class HelperService : AccessibilityService() {
         }
 
         val path = Path()
-        var y: Float = (resources.displayMetrics.heightPixels * 4 / 5f)
-        var x: Float = (resources.displayMetrics.widthPixels * 4f / 5f)
+        val y: Float = (resources.displayMetrics.heightPixels * 4 / 5f)
+        val x: Float = (resources.displayMetrics.widthPixels * 4f / 5f)
         path.moveTo(x, y)
         path.lineTo(x, y - resources.displayMetrics.heightPixels * 3 / 5f)
         val gestureDescription = GestureDescription.Builder()
@@ -358,9 +371,9 @@ class HelperService : AccessibilityService() {
         findPacketJob = null
         autoRobJob = runUnitDone(5 * DateUtils.MINUTE_IN_MILLIS, interval = 1L, run = {
             val flagView =
-                rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/fia")
+                rootInActiveWindow?.findAccessibilityNodeInfosByViewId(LUCK_TEXT_VIEW_ID)
                     ?.firstOrNull()
-            if (flagView == null || "送你一个好运气" != flagView.text) {
+            if (flagView == null || LUCK_TEXT != flagView.text) {
                 startFindPacket()
                 return@runUnitDone true
             }
@@ -409,9 +422,7 @@ class HelperService : AccessibilityService() {
             currentPage = MAX_PAGE - 1
             scrollToNextRoom()
         } else {
-            bandanbtn.parent?.let {
-                it.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            }
+            bandanbtn.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         }
     }
 
