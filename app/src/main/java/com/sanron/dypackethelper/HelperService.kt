@@ -154,9 +154,13 @@ class HelperService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 if (event.className == CLASS_WINDOW_ROB) {
-                    startRobPacket()
+                    MAIN_HANDLER.postDelayed({
+                        startRobPacket()
+                    }, 100)
                 } else if (event.className == CLASS_WINDOW_LIVE) {
-                    startFindPacket()
+                    MAIN_HANDLER.postDelayed({
+                        startFindPacket()
+                    }, 200)
                 } else if (event.className == CLASS_WINDOW_MAIN) {
                     MAIN_HANDLER.postDelayed({
                         processLog("跑到主页去了，尝试重新打开直播")
@@ -401,8 +405,13 @@ class HelperService : AccessibilityService() {
         val bandanbtn =
             rootInActiveWindow.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.aweme:id/ag8")
                 ?.firstOrNull()
-        bandanbtn?.parent?.let {
-            it.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (bandanbtn == null) {
+            currentPage = MAX_PAGE - 1
+            scrollToNextRoom()
+        } else {
+            bandanbtn.parent?.let {
+                it.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
         }
     }
 

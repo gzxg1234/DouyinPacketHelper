@@ -37,9 +37,10 @@ fun runUnitDone(
     onTimeOut: suspend () -> Unit = {}
 ): Job {
     return GlobalScope.launch {
+        val parentJob = this.coroutineContext[Job]
         try {
             withTimeout(timeout) {
-                while (isActive) {
+                while (isActive && parentJob?.isCancelled != true) {
                     if (run()) {
                         return@withTimeout
                     }
